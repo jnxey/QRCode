@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OpenCV.js 三角形检测</title>
-    <script src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
+    <title>OpenCV.js 精确三角形检测</title>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
     <style>
         canvas { border:1px solid black; }
     </style>
@@ -51,19 +51,38 @@
 
     for (let i = 0; i < contours.size(); i++) {
       let cnt = contours.get(i);
-      let approx = new cv.Mat();
-      cv.approxPolyDP(cnt, approx, 0.04 * cv.arcLength(cnt, true), true);
 
-      if (approx.rows === 3) {  // 三角形
-        let color = new cv.Scalar(0, 255, 0, 255); // 绿色
-        cv.drawContours(src, new cv.MatVector(approx), -1, color, 2);
+      // 过滤太小的轮廓
+      if (cv.contourArea(cnt) < 100) {
+        cnt.delete();
+        continue;
       }
-      approx.delete(); cnt.delete();
+
+      let approx = new cv.Mat();
+      let epsilon = 0.02 * cv.arcLength(cnt, true); // 精度可调
+      cv.approxPolyDP(cnt, approx, epsilon, true);
+
+      // 顶点=3 且凸形才判定为三角形
+      if (approx.rows === 3 && cv.isContourConvex(approx)) {
+        // 抗锯齿描边
+        let color = new cv.Scalar(0, 255, 0, 255);
+        let contourVec = new cv.MatVector();
+        contourVec.push_back(approx);
+        cv.drawContours(src, contourVec, 0, color, 2, cv.LINE_AA); // LINE_AA 抗锯齿
+        contourVec.delete();
+      }
+
+      approx.delete();
+      cnt.delete();
     }
 
     cv.imshow('canvasOutput', src);
 
-    src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+    src.delete();
+    gray.delete();
+    edges.delete();
+    contours.delete();
+    hierarchy.delete();
   }
 </script>
 </body>
