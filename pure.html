@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+<body>
+<img id="mypng" src="qrcode.png" crossorigin="anonymous">
+<script src="qr-pure.js"></script>
+<script>
+  const img = document.getElementById('mypng');
+  img.onload = async () => {
+    const results = await QRPure.decodeFromImageElement(img);
+    console.log(results);
+    // e.g. results -> [ {text, matrix, size, corners, error}, ... ]
+    results.forEach((r, i) => {
+      if (r.text) console.log('QR', i, 'text=', r.text);
+      else console.warn('QR', i, 'failed:', r.error);
+    });
+  };
+</script>
+
+</body>
+</html>
