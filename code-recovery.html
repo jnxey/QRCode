@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+<body>
+<script>
+  /**
+   * 将环形图像反向映射为正方形图片
+   * @param {HTMLImageElement} ringImg - 已加载的环形 Canvas 或图片
+   * @param {number} innerRadius
+   * @param {number} outerRadius
+   * @param {number} width - 原正方形图片宽度
+   * @param {number} height - 原正方形图片高度
+   * @returns {HTMLCanvasElement} - 恢复后的正方形 Canvas
+   */
+  function restoreRingToSquare(ringImg, innerRadius, outerRadius, width, height) {
+    const ringDiameter = outerRadius * 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    // 获取环图像像素
+    const ringCanvas = document.createElement('canvas');
+    ringCanvas.width = ringDiameter;
+    ringCanvas.height = ringDiameter;
+    ringCanvas.getContext('2d').drawImage(ringImg, 0, 0, ringDiameter, ringDiameter);
+    const ringPixels = ringCanvas.getContext('2d').getImageData(0, 0, ringDiameter, ringDiameter).data;
+
+    const outImage = ctx.createImageData(width, height);
+    const outPixels = outImage.data;
+
+    const cx = outerRadius;
+    const cy = outerRadius;
+    const radiusDiff = outerRadius - innerRadius;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        // 计算对应环像素坐标
+        let theta, r;
+        if (x < width / 2) {
+          theta = (x / (width/2)) * Math.PI;
+        } else {
+          theta = Math.PI + ((x - width/2) / (width/2)) * Math.PI;
+        }
+        r = innerRadius + (y / height) * radiusDiff;
+
+        const ringX = Math.floor(cx + r * Math.cos(theta));
+        const ringY = Math.floor(cy + r * Math.sin(theta));
+
+        const ringIndex = (ringY * ringDiameter + ringX) * 4;
+        const outIndex = (y * width + x) * 4;
+
+        outPixels[outIndex] = ringPixels[ringIndex];
+        outPixels[outIndex + 1] = ringPixels[ringIndex + 1];
+        outPixels[outIndex + 2] = ringPixels[ringIndex + 2];
+        outPixels[outIndex + 3] = ringPixels[ringIndex + 3];
+      }
+    }
+
+    ctx.putImageData(outImage, 0, 0);
+    return canvas;
+  }
+</script>
+<input type="file" id="uploadRing" accept="image/*">
+<div id="img-box"></div>
+<script>
+  document.getElementById('uploadRing').onchange = function(e) {
+    const file = e.target.files[0];
+    const img = new Image();
+    img.onload = () => {
+      const restoredCanvas = restoreRingToSquare(img, 100, 150, 200, 200);
+      document.body.appendChild(restoredCanvas);
+    };
+    img.src = URL.createObjectURL(file);
+    document.getElementById('img-box').append(img);
+  };
+</script>
+
+</body>
+</html>

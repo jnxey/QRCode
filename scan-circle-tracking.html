@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>灰度/边缘圆形检测</title>
+    <script src="https://cdn.jsdelivr.net/npm/tracking@1.1.3/build/tracking-min.js"></script>
+    <style>
+        #canvas { border:1px solid #ccc; }
+        video { display: none; }
+    </style>
+</head>
+<body>
+
+<h2>上传图片或使用摄像头检测任意圆形</h2>
+
+<input type="file" id="fileInput">
+<br><br>
+<video id="video" width="320" height="240" autoplay></video>
+<canvas id="canvas" width="320" height="240"></canvas>
+
+<script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  // ----------------- 边缘检测函数 -----------------
+  function getEdges(imageData, width, height) {
+    const data = imageData.data;
+    const gray = new Uint8ClampedArray(width * height);
+
+    // 转灰度
+    for (let i = 0; i < width*height; i++) {
+      const r = data[i*4];
+      const g = data[i*4+1];
+      const b = data[i*4+2];
+      gray[i] = 0.299*r + 0.587*g + 0.114*b;
+    }
+
+    // 简单Sobel边缘检测
+    const edges = new Uint8ClampedArray(width*height);
+    for (let y = 1; y < height-1; y++) {
+      for (let x = 1; x < width-1; x++) {
+        const i = y*width + x;
+        const gx = gray[i+1] - gray[i-1] + 2*(gray[i+width+1]-gray[i+width-1]) + (gray[i+2*width+1]-gray[i+2*width-1]);
+        const gy = gray[i-width-1] + 2*(gray[i-1]-gray[i+1]) + (gray[i+width-1]-gray[i+width+1]);
+        let g = Math.sqrt(gx*gx + gy*gy);
+        edges[i] = g > 50 ? 255 : 0; // 阈值可调
+      }
+    }
+    return edges;
+  }
+
+  // ----------------- 检测圆形函数 -----------------
+  function detectCirclesFromEdges(edges, width, height) {
+    // 基于轮廓简单寻找连通区域
+    const visited = new Uint8Array(width*height);
+    const circles = [];
+
+    function bfs(sx, sy) {
+      const queue = [[sx, sy]];
+      const points = [];
+      while(queue.length>0) {
+        const [x,y] = queue.shift();
+        const i = y*width + x;
+        if (x<0||x>=width||y<0||y>=height) continue;
+        if (visited[i] || edges[i]===0) continue;
+        visited[i] = 1;
+        points.push([x,y]);
+        queue.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+      }
+      return points;
+    }
+
+    for (let y=0;y<height;y++) {
+      for (let x=0;x<width;x++) {
+        const i = y*width + x;
+        if (edges[i] && !visited[i]) {
+          const pts = bfs(x,y);
+          if (pts.length>10) { // 最小点数过滤噪声
+            // 计算中心和半径
+            let sumX=0,sumY=0;
+            pts.forEach(p=>{sumX+=p[0]; sumY+=p[1];});
+            const cx=sumX/pts.length;
+            const cy=sumY/pts.length;
+            let r=0;
+            pts.forEach(p=>{
+              const dx=p[0]-cx, dy=p[1]-cy;
+              r += Math.sqrt(dx*dx + dy*dy);
+            });
+            r = r/pts.length;
+            if (r>2) circles.push({x:cx,y:cy,radius:r});
+          }
+        }
+      }
+    }
+    return circles;
+  }
+
+  // ----------------- 图片上传检测 -----------------
+  document.getElementById('fileInput').addEventListener('change', function(e){
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = function(){
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+      const edges = getEdges(imageData, canvas.width, canvas.height);
+      const circles = detectCirclesFromEdges(edges, canvas.width, canvas.height);
+
+      ctx.drawImage(img, 0,0);
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'yellow';
+      circles.forEach(c=>{
+        ctx.beginPath();
+        ctx.arc(c.x,c.y,c.radius,0,2*Math.PI);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(c.x,c.y,3,0,2*Math.PI);
+        ctx.fill();
+      });
+    }
+    img.src = URL.createObjectURL(file);
+  });
+
+  // ----------------- 摄像头实时检测 -----------------
+  navigator.mediaDevices.getUserMedia({video:true})
+    .then(stream=>{
+      const video = document.getElementById('video');
+      video.srcObject = stream;
+      video.style.display = 'block';
+      canvas.width = video.width;
+      canvas.height = video.height;
+
+      function processFrame(){
+        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+        const edges = getEdges(imageData, canvas.width, canvas.height);
+        const circles = detectCirclesFromEdges(edges, canvas.width, canvas.height);
+
+        ctx.drawImage(video,0,0);
+        ctx.strokeStyle='red'; ctx.lineWidth=2; ctx.fillStyle='yellow';
+        circles.forEach(c=>{
+          ctx.beginPath();
+          ctx.arc(c.x,c.y,c.radius,0,2*Math.PI);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(c.x,c.y,3,0,2*Math.PI);
+          ctx.fill();
+        });
+        requestAnimationFrame(processFrame);
+      }
+      processFrame();
+    })
+    .catch(err=>console.log('摄像头错误:', err));
+</script>
+
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+<body>
+<img id="inputImg" src="chip.jpg" style="display:none" alt="">
+<canvas id="outputCanvas"></canvas>
+<script src="opencv.js"></script>
+<script>
+  cv['onRuntimeInitialized'] = function() {
+
+    function detectCircles(imgElementId, canvasId, options = {}) {
+      // 默认参数
+      const {
+        dp = 1,               // 分辨率缩放
+        minDist = 50,         // 圆心最小距离
+        param1 = 100,         // Canny高阈值
+        param2 = 40,          // 霍夫累加器阈值
+        minRadius = 10,       // 最小半径
+        maxRadius = 100,      // 最大半径
+        useCanny = true,      // 是否提前做Canny边缘检测
+        colorFilter = null    // 颜色范围过滤 [lowR, lowG, lowB, highR, highG, highB]
+      } = options
+
+      let src = cv.imread(imgElementId)
+      let dst = src.clone()
+      let gray = new cv.Mat()
+
+      // 可选颜色过滤
+      if (colorFilter) {
+        let mask = new cv.Mat()
+        let low = new cv.Mat(src.rows, src.cols, src.type(), colorFilter.slice(0, 3).concat([0]))
+        let high = new cv.Mat(src.rows, src.cols, src.type(), colorFilter.slice(3, 6).concat([255]))
+        cv.inRange(src, low, high, mask)
+        cv.cvtColor(mask, gray, cv.COLOR_GRAY2GRAY, 0)
+        mask.delete()
+        low.delete()
+        high.delete()
+      } else {
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0)
+      }
+
+      // 高斯模糊，减少噪声
+      cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 2, 2)
+
+      // 可选 Canny 边缘
+      if (useCanny) {
+        cv.Canny(gray, gray, param1 / 2, param1)
+      }
+
+      // 霍夫圆检测
+      let circles = new cv.Mat()
+      cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, dp, minDist, param1, param2, minRadius, maxRadius)
+
+      // 绘制圆
+      for (let i = 0; i < circles.cols; ++i) {
+        let x = circles.data32F[i * 3]
+        let y = circles.data32F[i * 3 + 1]
+        let radius = circles.data32F[i * 3 + 2]
+        cv.circle(dst, new cv.Point(x, y), radius, [255, 0, 0, 255], 3)
+        cv.circle(dst, new cv.Point(x, y), 2, [0, 255, 0, 255], 3) // 圆心标记
+      }
+
+      // 显示
+      cv.imshow(canvasId, dst)
+
+      // 释放
+      src.delete()
+      dst.delete()
+      gray.delete()
+      circles.delete()
+    }
+
+    // 调用
+    detectCircles('inputImg', 'outputCanvas', {
+      dp: 1,
+      minDist: 50,
+      param1: 100,
+      param2: 50,
+      minRadius: 15,
+      maxRadius: 120,
+      useCanny: true
+      // colorFilter: [0,0,0,255,255,255] // 可选：只检测某个颜色范围
+    })
+
+  }
+</script>
+
+</body>
+</html>

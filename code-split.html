@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+<body>
+<script>
+  /**
+   * 将正方形图片左右拆分映射到圆环，并加上边缘抗锯齿
+   * @param {HTMLImageElement} img - 已加载的正方形图片
+   * @param {number} innerRadius - 内半径
+   * @param {number} outerRadius - 外半径
+   * @param {number} edgeFeather - 边缘抗锯齿宽度（像素）
+   * @returns {HTMLCanvasElement} - 渲染好的 Canvas
+   */
+  function mapSquareToRingAA(img, innerRadius, outerRadius, edgeFeather = 2) {
+    const width = img.width;
+    const height = img.height;
+    const ringDiameter = outerRadius * 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = ringDiameter;
+    const ctx = canvas.getContext('2d');
+
+    // 临时画布获取原图像素
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    tempCanvas.getContext('2d').drawImage(img, 0, 0, width, height);
+    const imgData = tempCanvas.getContext('2d').getImageData(0, 0, width, height).data;
+
+    const outImage = ctx.createImageData(ringDiameter, ringDiameter);
+    const outPixels = outImage.data;
+
+    const cx = outerRadius;
+    const cy = outerRadius;
+    const radiusDiff = outerRadius - innerRadius;
+
+    for (let y = 0; y < ringDiameter; y++) {
+      for (let x = 0; x < ringDiameter; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const r = Math.sqrt(dx*dx + dy*dy);
+
+        if (r < innerRadius - edgeFeather || r > outerRadius + edgeFeather) continue;
+
+        // 计算 alpha（边缘渐变）
+        let alpha = 1;
+        if (r < innerRadius) alpha = (r - (innerRadius - edgeFeather)) / edgeFeather;
+        else if (r > outerRadius) alpha = (outerRadius + edgeFeather - r) / edgeFeather;
+        alpha = Math.max(0, Math.min(1, alpha));
+
+        let theta = Math.atan2(dy, dx);
+        if (theta < 0) theta += 2 * Math.PI;
+
+        // 左右半图映射
+        let srcX = (theta < Math.PI)
+          ? Math.floor((theta / Math.PI) * (width / 2))
+          : Math.floor(width/2 + ((theta - Math.PI) / Math.PI) * (width/2));
+        let srcY = Math.floor(((r - innerRadius)/radiusDiff) * height);
+
+        srcX = Math.min(width-1, Math.max(0, srcX));
+        srcY = Math.min(height-1, Math.max(0, srcY));
+
+        const srcIndex = (srcY * width + srcX) * 4;
+        const dstIndex = (y * ringDiameter + x) * 4;
+
+        outPixels[dstIndex] = imgData[srcIndex];
+        outPixels[dstIndex+1] = imgData[srcIndex+1];
+        outPixels[dstIndex+2] = imgData[srcIndex+2];
+        outPixels[dstIndex+3] = imgData[srcIndex+3] * alpha;
+      }
+    }
+
+    ctx.putImageData(outImage, 0, 0);
+    return canvas;
+  }
+</script>
+<input type="file" id="upload" accept="image/*">
+<div id="img-box"></div>
+<script>
+  document.getElementById('upload').onchange = function(e) {
+    const file = e.target.files[0];
+    const img = new Image();
+    img.onload = () => {
+      const innerRadius = 100;
+      const outerRadius = 150;
+      const ringCanvas = mapSquareToRingAA(img, innerRadius, outerRadius);
+      document.body.appendChild(ringCanvas);
+    };
+    img.src = URL.createObjectURL(file);
+    document.getElementById('img-box').append(img);
+  };
+</script>
+
+</body>
+</html>
