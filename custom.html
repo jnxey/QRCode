@@ -1,0 +1,335 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Spiral RingCode — B2 Demo</title>
+    <style>
+        body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 18px; background:#f6f7fb; color:#111 }
+        .row{ display:flex; gap:12px; margin-bottom:10px; align-items:center}
+        canvas{ background: white; border:1px solid #ddd; border-radius:8px }
+        label{ font-size:13px }
+        input, textarea, select { font-size:13px; padding:6px; }
+        textarea { width:480px; height:80px; }
+        button{ padding:8px 12px; border-radius:8px; background:#2563eb; color:white; border:0; cursor:pointer }
+        button.secondary{ background:#6b7280 }
+        small{ color:#555 }
+        .debug{ background:#fff; padding:10px; border-radius:8px; margin-top:10px; box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+    </style>
+</head>
+<body>
+<h2>Spiral / RingCode — B2 (Generator + Simple Decoder)</h2>
+
+<div class="row">
+    <label>Text to encode</label>
+    <textarea id="text">Hello Spiral RingCode! 这是测试文本 012345</textarea>
+</div>
+
+<div class="row">
+    <label>Inner radius (px)</label>
+    <input id="rInner" type="number" value="80" style="width:90px"/>
+    <label>Outer radius (px)</label>
+    <input id="rOuter" type="number" value="220" style="width:90px"/>
+    <label>Module angular step (deg)</label>
+    <input id="angDeg" type="number" value="4" style="width:70px"/>
+    <label>Module radial thickness (px)</label>
+    <input id="thick" type="number" value="6" style="width:70px"/>
+</div>
+
+<div class="row">
+    <label>Spiral tightness (0..1)</label>
+    <input id="tight" type="number" min="0" max="1" step="0.01" value="0.5" style="width:120px"/>
+    <label>Foreground (dark) color</label>
+    <input id="fg" type="color" value="#000000"/>
+    <label>Background color</label>
+    <input id="bg" type="color" value="#ffffff"/>
+</div>
+
+<div class="row">
+    <button id="genBtn">Generate</button>
+    <button id="exportBtn" class="secondary">Export PNG</button>
+    <button id="clearBtn" class="secondary">Clear</button>
+    <input id="fileLoad" type="file" accept="image/*" style="display:none"/>
+    <button id="loadImgBtn" class="secondary">Load Image (for decode)</button>
+    <button id="decodeBtn" class="secondary">Try Decode</button>
+</div>
+
+<div class="row">
+    <canvas id="canvas" width="800" height="800"></canvas>
+    <div style="width:300px">
+        <div class="debug">
+            <strong>Decoder output</strong>
+            <pre id="out" style="white-space:pre-wrap; word-break:break-word; font-size:13px; margin-top:8px"></pre>
+        </div>
+        <div class="debug" style="margin-top:8px">
+            <strong>Notes</strong>
+            <ul>
+                <li>Decoder assumes image is centered & roughly undistorted.</li>
+                <li>For robust real-world decoding, add perspective correction & stronger ECC.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script>
+  // ---------------------- utility: CRC32 ----------------------
+  function crc32buf(buf) {
+    // buf: Uint8Array
+    const table = (function(){
+      let c; const t = new Uint32Array(256);
+      for(let n=0;n<256;n++){
+        c = n;
+        for(let k=0;k<8;k++){
+          c = ((c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1));
+        }
+        t[n]=c>>>0;
+      }
+      return t;
+    })();
+    let crc = 0xFFFFFFFF;
+    for(let i=0;i<buf.length;i++){
+      crc = (crc >>> 8) ^ table[(crc ^ buf[i]) & 0xFF];
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function u32ToBytesBE(x){ return [(x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255]; }
+
+  // ---------------------- encoding: text -> bit array (with CRC32) ----------------------
+  function textToBitsWithCRC(text, maxBytes=512){
+    const encoder = new TextEncoder();
+    let bytes = encoder.encode(text);
+    if(bytes.length > maxBytes){
+      bytes = bytes.slice(0, maxBytes);
+    }
+    const crc = crc32buf(bytes);
+    const arr = new Uint8Array(bytes.length + 4);
+    arr.set(bytes,0);
+    arr.set(u32ToBytesBE(crc), bytes.length);
+    // convert to bit array MSB first per byte
+    const bits = [];
+    for(let i=0;i<arr.length;i++){
+      for(let b=7;b>=0;b--){
+        bits.push( (arr[i]>>b) & 1 );
+      }
+    }
+    return {bits, byteLen: arr.length, crc};
+  }
+
+  // ---------------------- draw generator ----------------------
+  function drawRingCode(ctx, centerX, centerY, params){
+    const {bits, rInner, rOuter, angDeg, moduleThickness, tightness, fg, bg} = params;
+    // Clear
+    ctx.fillStyle = bg; ctx.fillRect(0,0,ctx.canvas.width, ctx.canvas.height);
+
+    const totalBits = bits.length;
+    const angStep = (angDeg * Math.PI/180); // radians per module
+    // We will lay bits along a spiral: for module index i, compute angle = i*angStep, radius = rInner + spiralProgress(i)
+    // spiralProgress uses tightness to control radial growth per bit
+    function radiusAt(i){
+      const t = i / Math.max(1,totalBits-1);
+      // base linear radius growth across spiral turns influenced by tightness
+      // more tightness -> slower radial growth (more turns)
+      const growth = rOuter - rInner;
+      // use a nonlinear mapping so early bits near inner ring etc.
+      return rInner + growth * (t ** (0.8 + 0.4*(1-tightness)));
+    }
+
+    // Draw modules as small arc segments; dark for 1, skip or draw background for 0
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.fillStyle = fg;
+    ctx.strokeStyle = fg;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "butt";
+
+    for(let i=0;i<totalBits;i++){
+      const bit = bits[i];
+      const ang = i * angStep;
+      const r = radiusAt(i);
+      const rInnerModule = Math.max(r - moduleThickness, rInner);
+      const rOuterModule = Math.min(r, rOuter);
+      const start = ang;
+      const end = ang + angStep * 0.95; // small gap between modules
+      if(bit){
+        // draw filled arc segment by drawing path for ring segment
+        ctx.beginPath();
+        // outer arc
+        ctx.arc(0,0, rOuterModule, start, end, false);
+        // inner arc back
+        ctx.arc(0,0, rInnerModule, end, start, true);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // optionally draw subtle background spacer (skip)
+      }
+    }
+
+    // draw center hole
+    ctx.beginPath();
+    ctx.fillStyle = bg;
+    ctx.arc(0,0, rInner - 8, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ---------------------- decoder (naive sampling) ----------------------
+  function tryDecodeCanvas(ctx){
+    // This naive decoder: assumes generator params known.
+    // Steps:
+    // 1. Use center = canvas center (assumption!)
+    // 2. For expected param values, sample polar points per module position
+    // 3. Threshold brightness to decide bit
+    // 4. Reconstruct bytes, check last 4 bytes as CRC32
+    const w = ctx.canvas.width, h = ctx.canvas.height;
+    const image = ctx.getImageData(0,0,w,h);
+    const px = image.data;
+
+    function samplePolar(centerX, centerY, r, theta){
+      const x = Math.round(centerX + r * Math.cos(theta));
+      const y = Math.round(centerY + r * Math.sin(theta));
+      if(x<0||x>=w||y<0||y>=h) return 255;
+      const idx = (y*w + x) * 4;
+      // luminance
+      const r0 = px[idx], g0 = px[idx+1], b0 = px[idx+2];
+      return 0.299*r0 + 0.587*g0 + 0.114*b0;
+    }
+
+    // Try to infer parameters from UI fields (we assume user didn't change between gen/decode)
+    const rInner = parseFloat(document.getElementById('rInner').value);
+    const rOuter = parseFloat(document.getElementById('rOuter').value);
+    const angDeg = parseFloat(document.getElementById('angDeg').value);
+    const moduleThickness = parseFloat(document.getElementById('thick').value);
+    const tightness = parseFloat(document.getElementById('tight').value);
+    const centerX = w/2, centerY = h/2;
+
+    // guess totalbits by computing circumference at mid radius / angular step?
+    // But we don't know totalbits. We'll attempt to sample along a range until we hit many 'background' bits in a row at outer radius.
+    // For naive approach, we will try a large number cap, e.g., 5000 modules.
+    const maxModules = 8000;
+    const angStep = (angDeg * Math.PI/180);
+
+    function radiusAt(i, totalBitsGuess){
+      const t = i / Math.max(1, totalBitsGuess-1);
+      return rInner + (rOuter - rInner) * (t ** (0.8 + 0.4*(1-tightness)));
+    }
+
+    // We'll attempt with a guessed totalBits by scanning and detecting outer boundary: sample radial brightness near presumed module location
+    // Simple approach: try a large totalBits guess = floor( (2π * avgRadius) / (angStep * avgRadius?) ) -> easier: set guess = Math.floor( (2π)/angStep * turns ), choose turns= (rOuter-rInner)/moduleThickness * 0.6
+    const turnsGuess = Math.max(6, Math.round((rOuter - rInner) / moduleThickness * 0.3));
+    const totalBitsGuess = Math.max(8, Math.floor( (2*Math.PI / angStep) * turnsGuess ));
+    const bits = [];
+
+    for(let i=0;i<totalBitsGuess;i++){
+      const theta = i * angStep + angStep * 0.45; // sample near module center
+      const r = radiusAt(i, totalBitsGuess) - moduleThickness*0.5;
+      const lum = samplePolar(centerX, centerY, r, theta);
+      // threshold: dark < 128 => 1
+      bits.push(lum < 128 ? 1 : 0);
+    }
+
+    // pack bits into bytes, attempt to find CRC at end
+    function bitsToBytes(bits){
+      const bytes = [];
+      for(let i=0;i+7<bits.length;i+=8){
+        let v=0;
+        for(let b=0;b<8;b++){
+          v = (v<<1) | bits[i+b];
+        }
+        bytes.push(v);
+      }
+      return bytes;
+    }
+    const bytes = bitsToBytes(bits);
+    if(bytes.length < 5) return {ok:false, msg:"Too few bytes read."};
+
+    // Interpret last 4 bytes as CRC32 (big-endian)
+    const dataBytes = new Uint8Array(bytes.slice(0, bytes.length-4));
+    const crcRead = ((bytes[bytes.length-4]<<24)>>>0) | ((bytes[bytes.length-3]<<16)>>>0) | ((bytes[bytes.length-2]<<8)>>>0) | (bytes[bytes.length-1]>>>0);
+    const crcCalc = crc32buf(dataBytes);
+
+    // decode text
+    let decodedText = '';
+    try{
+      decodedText = new TextDecoder().decode(dataBytes);
+    }catch(e){
+      decodedText = "(decoded bytes not valid UTF-8)";
+    }
+
+    return {ok: crcCalc===crcRead, decodedText, crcRead, crcCalc, rawBytes: bytes, msg: crcCalc===crcRead ? "CRC OK" : "CRC MISMATCH (try better image/perspective correction)"};
+  }
+
+  // ---------------------- wiring UI ----------------------
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  document.getElementById('genBtn').addEventListener('click', ()=>{
+    const txt = document.getElementById('text').value;
+    const rInner = parseFloat(document.getElementById('rInner').value);
+    const rOuter = parseFloat(document.getElementById('rOuter').value);
+    const angDeg = parseFloat(document.getElementById('angDeg').value);
+    const thick = parseFloat(document.getElementById('thick').value);
+    const tight = parseFloat(document.getElementById('tight').value);
+    const fg = document.getElementById('fg').value;
+    const bg = document.getElementById('bg').value;
+
+    const {bits, byteLen, crc} = textToBitsWithCRC(txt, 900);
+    const params = {bits, rInner, rOuter, angDeg, moduleThickness: thick, tightness: tight, fg, bg};
+    drawRingCode(ctx, canvas.width/2, canvas.height/2, params);
+
+    // draw small legend and center text
+    ctx.fillStyle = fg; ctx.font = "12px system-ui";
+    ctx.fillText(`len:${txt.length} bytes (+CRC=${byteLen}B)`, 10, canvas.height - 10);
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', ()=>{
+    const link = document.createElement('a');
+    link.download = 'ringcode.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+
+  document.getElementById('clearBtn').addEventListener('click', ()=>{
+    ctx.fillStyle = document.getElementById('bg').value;
+    ctx.fillRect(0,0,canvas.width, canvas.height);
+    document.getElementById('out').textContent = '';
+  });
+
+  document.getElementById('loadImgBtn').addEventListener('click', ()=>{
+    document.getElementById('fileLoad').click();
+  });
+  document.getElementById('fileLoad').addEventListener('change', (ev)=>{
+    const f = ev.target.files[0];
+    if(!f) return;
+    const img = new Image();
+    img.onload = ()=>{
+      // fit image into canvas while preserving size (we expect square)
+      // center and draw
+      const ctxw = canvas.width, ctxh = canvas.height;
+      ctx.fillStyle = document.getElementById('bg').value;
+      ctx.fillRect(0,0,ctxw,ctxh);
+      // compute scale
+      const scale = Math.min(ctxw / img.width, ctxh / img.height);
+      const dw = img.width * scale, dh = img.height * scale;
+      ctx.drawImage(img, (ctxw-dw)/2, (ctxh-dh)/2, dw, dh);
+    };
+    const url = URL.createObjectURL(f);
+    img.src = url;
+  });
+
+  document.getElementById('decodeBtn').addEventListener('click', ()=>{
+    const res = tryDecodeCanvas(ctx);
+    const out = document.getElementById('out');
+    if(!res.ok){
+      out.textContent = `Decode failed or CRC mismatch.\nMessage: ${res.msg}\ncrcRead: ${res.crcRead}\ncrcCalc: ${res.crcCalc}\n\nRaw bytes (first 64): ${res.rawBytes ? res.rawBytes.slice(0,64).join(' ') : 'n/a'}`;
+    } else {
+      out.textContent = `DECODE OK ✅\nText:\n${res.decodedText}\n\ncrcRead: ${res.crcRead}\ncrcCalc: ${res.crcCalc}`;
+    }
+  });
+
+  // initial clear
+  ctx.fillStyle = document.getElementById('bg').value;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+</script>
+</body>
+</html>

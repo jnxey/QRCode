@@ -87,8 +87,8 @@
     const file = e.target.files[0];
     const img = new Image();
     img.onload = () => {
-      const innerRadius = 100;
-      const outerRadius = 150;
+      const innerRadius = 200;
+      const outerRadius = 300;
       const ringCanvas = mapSquareToRingAA(img, innerRadius, outerRadius);
       document.body.appendChild(ringCanvas);
     };

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OpenCV.js 三角形检测</title>
+    <script src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
+    <style>
+        canvas { border:1px solid black; }
+    </style>
+</head>
+<body>
+<h2>上传图片检测三角形</h2>
+<input type="file" id="fileInput">
+<br><br>
+<canvas id="canvasOutput"></canvas>
+
+<script>
+  let inputElement = document.getElementById('fileInput');
+  let canvas = document.getElementById('canvasOutput');
+  let ctx = canvas.getContext('2d');
+
+  inputElement.addEventListener('change', (e) => {
+    let file = e.target.files[0];
+    if (!file) return;
+    let reader = new FileReader();
+    reader.onload = function(event) {
+      let img = new Image();
+      img.onload = function() {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        detectTriangles();
+      }
+      img.src = event.target.result;
+    }
+    reader.readAsDataURL(file);
+  });
+
+  function detectTriangles() {
+    let src = cv.imread(canvas);
+    let gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    cv.GaussianBlur(gray, gray, new cv.Size(5,5), 0);
+
+    let edges = new cv.Mat();
+    cv.Canny(gray, edges, 50, 150);
+
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
+    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    for (let i = 0; i < contours.size(); i++) {
+      let cnt = contours.get(i);
+      let approx = new cv.Mat();
+      cv.approxPolyDP(cnt, approx, 0.04 * cv.arcLength(cnt, true), true);
+
+      if (approx.rows === 3) {  // 三角形
+        let color = new cv.Scalar(0, 255, 0, 255); // 绿色
+        cv.drawContours(src, new cv.MatVector(approx), -1, color, 2);
+      }
+      approx.delete(); cnt.delete();
+    }
+
+    cv.imshow('canvasOutput', src);
+
+    src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+  }
+</script>
+</body>
+</html>
