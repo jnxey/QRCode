@@ -1,93 +1,84 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>Document</title>
+    <meta charset="utf-8">
+    <title>桌面筹码自动标记</title>
+    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        canvas { border: 1px solid #ccc; margin-top: 10px; }
+    </style>
 </head>
 <body>
-<img id="inputImg" src="chip.jpg" style="display:none" alt="">
-<canvas id="outputCanvas"></canvas>
-<script src="https://docs.opencv.org/4.x/opencv.js"></script>
+
+<h2>上传桌面图片，自动标记筹码</h2>
+<input type="file" id="fileInput" accept="image/*">
+<canvas id="canvas"></canvas>
+
 <script>
-  cv['onRuntimeInitialized'] = function() {
+  document.getElementById('fileInput').addEventListener('change', function(e){
+    let file = e.target.files[0];
+    if(!file) return;
+    let img = new Image();
+    img.onload = () => processImage(img);
+    img.src = URL.createObjectURL(file);
+  });
 
-    function detectCircles(imgElementId, canvasId, options = {}) {
-      // 默认参数
-      const {
-        dp = 1,               // 分辨率缩放
-        minDist = 50,         // 圆心最小距离
-        param1 = 100,         // Canny高阈值
-        param2 = 40,          // 霍夫累加器阈值
-        minRadius = 10,       // 最小半径
-        maxRadius = 100,      // 最大半径
-        useCanny = true,      // 是否提前做Canny边缘检测
-        colorFilter = null    // 颜色范围过滤 [lowR, lowG, lowB, highR, highG, highB]
-      } = options
+  function processImage(img){
+    let canvas = document.getElementById('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    let ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
 
-      let src = cv.imread(imgElementId)
-      let dst = src.clone()
-      let gray = new cv.Mat()
+    let src = cv.imread(canvas);
 
-      // 可选颜色过滤
-      if (colorFilter) {
-        let mask = new cv.Mat()
-        let low = new cv.Mat(src.rows, src.cols, src.type(), colorFilter.slice(0, 3).concat([0]))
-        let high = new cv.Mat(src.rows, src.cols, src.type(), colorFilter.slice(3, 6).concat([255]))
-        cv.inRange(src, low, high, mask)
-        cv.cvtColor(mask, gray, cv.COLOR_GRAY2GRAY, 0)
-        mask.delete()
-        low.delete()
-        high.delete()
-      } else {
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0)
-      }
+    // 1. 转灰度 + 高斯模糊
+    let gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(7,7), 2);
 
-      // 高斯模糊，减少噪声
-      cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 2, 2)
+    // 2. 自适应阈值 + 反色，让筹码凸显
+    let thresh = new cv.Mat();
+    cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+      cv.THRESH_BINARY_INV, 11, 3);
 
-      // 可选 Canny 边缘
-      if (useCanny) {
-        cv.Canny(gray, gray, param1 / 2, param1)
-      }
+    // 3. 可选：膨胀+腐蚀，闭运算去掉噪点
+    let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3,3));
+    cv.morphologyEx(thresh, thresh, cv.MORPH_CLOSE, kernel);
 
-      // 霍夫圆检测
-      let circles = new cv.Mat()
-      cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, dp, minDist, param1, param2, minRadius, maxRadius)
+    // 4. 找轮廓
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      // 绘制圆
-      for (let i = 0; i < circles.cols; ++i) {
-        let x = circles.data32F[i * 3]
-        let y = circles.data32F[i * 3 + 1]
-        let radius = circles.data32F[i * 3 + 2]
-        cv.circle(dst, new cv.Point(x, y), radius, [255, 0, 0, 255], 3)
-        cv.circle(dst, new cv.Point(x, y), 2, [0, 255, 0, 255], 3) // 圆心标记
-      }
+    // 5. 遍历轮廓，筛选圆形筹码
+    for(let i=0; i<contours.size(); i++){
+      let cnt = contours.get(i);
+      let area = cv.contourArea(cnt);
+      if(area < 1000) continue; // 忽略小噪点
 
-      // 显示
-      cv.imshow(canvasId, dst)
+      let perimeter = cv.arcLength(cnt, true);
+      let circularity = 4 * Math.PI * area / (perimeter * perimeter);
+      if(circularity < 0.6) continue; // 保证较圆
 
-      // 释放
-      src.delete()
-      dst.delete()
-      gray.delete()
-      circles.delete()
+      // 使用最小外接圆拟合
+      let circle = cv.minEnclosingCircle(cnt);
+      let center = circle.center;
+      let radius = circle.radius;
+
+      // 画圆
+      ctx.beginPath();
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 3;
+      ctx.arc(center.x, center.y, radius, 0, 2*Math.PI);
+      ctx.stroke();
+
+      cnt.delete();
     }
 
-    // 调用
-    detectCircles('inputImg', 'outputCanvas', {
-      dp: 1,
-      minDist: 50,
-      param1: 100,
-      param2: 50,
-      minRadius: 15,
-      maxRadius: 120,
-      useCanny: true
-      // colorFilter: [0,0,0,255,255,255] // 可选：只检测某个颜色范围
-    })
-
+    // 释放内存
+    src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete(); kernel.delete();
   }
 </script>
 
