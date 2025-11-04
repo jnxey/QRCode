@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Web 图片标注工具</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        #toolbar {
+            padding: 10px;
+            background: #f0f0f0;
+            display: flex;
+            gap: 10px;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 80vh;
+            background: #333;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #imageList {
+            max-height: 80vh;
+            overflow-y: auto;
+            width: 200px;
+            background: #fafafa;
+        }
+
+        #main {
+            display: flex;
+        }
+    </style>
+</head>
+<body>
+<div id="toolbar">
+    <input type="file" id="fileInput" multiple accept="image/*">
+    <select id="labelSelect">
+        <option value="cat">Cat</option>
+        <option value="dog">Dog</option>
+        <option value="person">Person</option>
+    </select>
+    <button id="prevBtn">上一张</button>
+    <button id="nextBtn">下一张</button>
+    <button id="exportBtn">导出标注</button>
+</div>
+<div id="main">
+    <div id="imageList"></div>
+    <div id="canvas-container">
+        <canvas id="imageCanvas"></canvas>
+        <canvas id="boxCanvas"></canvas>
+    </div>
+</div>
+<script>
+  const fileInput = document.getElementById('fileInput');
+  const imageCanvas = document.getElementById('imageCanvas');
+  const boxCanvas = document.getElementById('boxCanvas');
+  const ctxImage = imageCanvas.getContext('2d');
+  const ctxBox = boxCanvas.getContext('2d');
+
+  const labelSelect = document.getElementById('labelSelect');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const imageList = document.getElementById('imageList');
+
+  let images = [];
+  let currentIndex = 0;
+  let boxes = {}; // {imageName: [{x,y,w,h,label}]}
+
+  let drawing = false;
+  let startX, startY;
+
+  fileInput.addEventListener('change', e => {
+    images = Array.from(e.target.files);
+    currentIndex = 0;
+    loadImage();
+    renderImageList();
+  });
+
+  function renderImageList() {
+    imageList.innerHTML = '';
+    images.forEach((img, idx) => {
+      const div = document.createElement('div');
+      div.textContent = img.name;
+      div.style.cursor = 'pointer';
+      div.addEventListener('click', () => {
+        currentIndex = idx;
+        loadImage();
+      });
+      imageList.appendChild(div);
+    });
+  }
+
+  function loadImage() {
+    const img = new Image();
+    img.onload = () => {
+      imageCanvas.width = boxCanvas.width = img.width;
+      imageCanvas.height = boxCanvas.height = img.height;
+      ctxImage.drawImage(img, 0, 0);
+      drawBoxes();
+    };
+    img.src = URL.createObjectURL(images[currentIndex]);
+  }
+
+  function drawBoxes() {
+    ctxBox.clearRect(0, 0, boxCanvas.width, boxCanvas.height);
+    const imageName = images[currentIndex].name;
+    if (boxes[imageName]) {
+      boxes[imageName].forEach(box => {
+        ctxBox.strokeStyle = 'red';
+        ctxBox.lineWidth = 2;
+        ctxBox.strokeRect(box.x, box.y, box.w, box.h);
+        ctxBox.fillStyle = 'red';
+        ctxBox.fillText(box.label, box.x + 2, box.y + 12);
+      });
+    }
+  }
+
+  // 鼠标绘制框
+  boxCanvas.addEventListener('mousedown', e => {
+    drawing = true;
+    startX = e.offsetX;
+    startY = e.offsetY;
+  });
+
+  boxCanvas.addEventListener('mousemove', e => {
+    if (!drawing) return;
+    drawBoxes();
+    ctxBox.strokeStyle = 'lime';
+    ctxBox.lineWidth = 2;
+    const w = e.offsetX - startX;
+    const h = e.offsetY - startY;
+    ctxBox.strokeRect(startX, startY, w, h);
+  });
+
+  boxCanvas.addEventListener('mouseup', e => {
+    drawing = false;
+    const x = startX;
+    const y = startY;
+    const w = e.offsetX - startX;
+    const h = e.offsetY - startY;
+    const label = labelSelect.value;
+    const imageName = images[currentIndex].name;
+    if (!boxes[imageName]) boxes[imageName] = [];
+    boxes[imageName].push({x, y, w, h, label});
+    drawBoxes();
+  });
+
+  // 翻页
+  prevBtn.addEventListener('click', () => {
+    if (currentIndex > 0) currentIndex--;
+    loadImage();
+  });
+  nextBtn.addEventListener('click', () => {
+    if (currentIndex < images.length - 1) currentIndex++;
+    loadImage();
+  });
+
+  // 导出JSON
+  exportBtn.addEventListener('click', () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(boxes, null, 2));
+    const dlAnchorElem = document.createElement('a');
+    dlAnchorElem.setAttribute("href", dataStr);
+    dlAnchorElem.setAttribute("download", "annotations.json");
+    dlAnchorElem.click();
+  });
+
+</script>
+</body>
+</html>

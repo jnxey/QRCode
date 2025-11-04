@@ -1,116 +1,101 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>图片弯曲成环状效果</title>
-    <style>
-        canvas { border: 1px solid #ccc; margin: 10px; }
-        .controls { margin: 10px; padding: 10px; border: 1px solid #eee; }
-        label { display: inline-block; width: 150px; }
-        input { width: 100px; margin: 5px; }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
 </head>
 <body>
-<div class="controls">
-    <label for="innerRatio">内环比例 (0-1):</label>
-    <input type="range" id="innerRatio" min="0" max="0.99" step="0.01" value="0.5">
-    <span id="innerRatioValue">0.5</span><br>
-
-    <label for="angleRange">显示角度 (度):</label>
-    <input type="range" id="angleRange" min="0" max="360" step="1" value="360">
-    <span id="angleRangeValue">360</span><br>
-
-    <button onclick="processImage()">生成环状效果</button>
-</div>
-
-<div>
-    <canvas id="originalCanvas" width="200" height="200"></canvas>
-    <canvas id="ringCanvas" width="400" height="400"></canvas>
-</div>
-
 <script>
-  // 获取Canvas和上下文
-  const originalCanvas = document.getElementById('originalCanvas');
-  const originalCtx = originalCanvas.getContext('2d');
-  const ringCanvas = document.getElementById('ringCanvas');
-  const ringCtx = ringCanvas.getContext('2d');
+  /**
+   * 将正方形图片左右拆分映射到圆环，并加上边缘抗锯齿
+   * @param {HTMLImageElement} img - 已加载的正方形图片
+   * @param {number} innerRadius - 内半径
+   * @param {number} outerRadius - 外半径
+   * @param {number} edgeFeather - 边缘抗锯齿宽度（像素）
+   * @returns {HTMLCanvasElement} - 渲染好的 Canvas
+   */
+  function mapSquareToRingAA(img, innerRadius, outerRadius, edgeFeather = 2) {
+    const width = img.width;
+    const height = img.height;
+    const ringDiameter = outerRadius * 2;
 
-  // 获取控制元素
-  const innerRatioSlider = document.getElementById('innerRatio');
-  const innerRatioValue = document.getElementById('innerRatioValue');
-  const angleRangeSlider = document.getElementById('angleRange');
-  const angleRangeValue = document.getElementById('angleRangeValue');
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = ringDiameter;
+    const ctx = canvas.getContext('2d');
 
-  // 更新滑块值显示
-  innerRatioSlider.oninput = function() { innerRatioValue.textContent = this.value; };
-  angleRangeSlider.oninput = function() { angleRangeValue.textContent = this.value; };
+    // 临时画布获取原图像素
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    tempCanvas.getContext('2d').drawImage(img, 0, 0, width, height);
+    const imgData = tempCanvas.getContext('2d').getImageData(0, 0, width, height).data;
 
-  // 创建示例图片（白色到红色的渐变）
-  function createSampleImage() {
-    const gradient = originalCtx.createLinearGradient(0, 0, originalCanvas.width, 0);
-    gradient.addColorStop(0, 'white');
-    gradient.addColorStop(1, 'red');
+    const outImage = ctx.createImageData(ringDiameter, ringDiameter);
+    const outPixels = outImage.data;
 
-    originalCtx.fillStyle = gradient;
-    originalCtx.fillRect(0, 0, originalCanvas.width, originalCanvas.height);
+    const cx = outerRadius;
+    const cy = outerRadius;
+    const radiusDiff = outerRadius - innerRadius;
 
-    // 添加一些文本便于观察变形效果
-    originalCtx.fillStyle = 'blue';
-    originalCtx.font = '20px Arial';
-    originalCtx.fillText('变形测试', 30, 100);
-  }
+    for (let y = 0; y < ringDiameter; y++) {
+      for (let x = 0; x < ringDiameter; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const r = Math.sqrt(dx*dx + dy*dy);
 
-  // 将图片弯曲成环状
-  function warpImageToRing(innerRatio, angleRange) {
-    const centerX = ringCanvas.width / 2;
-    const centerY = ringCanvas.height / 2;
-    const outerRadius = Math.min(centerX, centerY) * 0.9;
-    const innerRadius = outerRadius * innerRatio;
-    const angleRangeRad = angleRange * Math.PI / 180;
+        if (r < innerRadius - edgeFeather || r > outerRadius + edgeFeather) continue;
 
-    // 清空画布
-    ringCtx.clearRect(0, 0, ringCanvas.width, ringCanvas.height);
+        // 计算 alpha（边缘渐变）
+        let alpha = 1;
+        if (r < innerRadius) alpha = (r - (innerRadius - edgeFeather)) / edgeFeather;
+        else if (r > outerRadius) alpha = (outerRadius + edgeFeather - r) / edgeFeather;
+        alpha = Math.max(0, Math.min(1, alpha));
 
-    // 获取原始图片数据
-    const imageData = originalCtx.getImageData(0, 0, originalCanvas.width, originalCanvas.height);
-    const data = imageData.data;
+        let theta = Math.atan2(dy, dx);
+        if (theta < 0) theta += 2 * Math.PI;
 
-    // 环状效果绘制
-    for (let y = 0; y < originalCanvas.height; y++) {
-      for (let x = 0; x < originalCanvas.width; x++) {
-        // 计算对应的角度和半径
-        const angle = (x / originalCanvas.width) * angleRangeRad;
-        const radius = innerRadius + (y / originalCanvas.height) * (outerRadius - innerRadius);
+        // 左右半图映射
+        let srcX = (theta < Math.PI)
+          ? Math.floor((theta / Math.PI) * (width / 2))
+          : Math.floor(width/2 + ((theta - Math.PI) / Math.PI) * (width/2));
+        let srcY = Math.floor(((r - innerRadius)/radiusDiff) * height);
 
-        // 计算环状坐标
-        const ringX = centerX + Math.cos(angle) * radius;
-        const ringY = centerY + Math.sin(angle) * radius;
+        srcX = Math.min(width-1, Math.max(0, srcX));
+        srcY = Math.min(height-1, Math.max(0, srcY));
 
-        // 获取原始像素颜色
-        const index = (y * originalCanvas.width + x) * 4;
-        const r = data[index];
-        const g = data[index + 1];
-        const b = data[index + 2];
-        const a = data[index + 3];
+        const srcIndex = (srcY * width + srcX) * 4;
+        const dstIndex = (y * ringDiameter + x) * 4;
 
-        // 在环状画布上绘制像素
-        ringCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a/255})`;
-        ringCtx.fillRect(ringX, ringY, 1, 1);
+        outPixels[dstIndex] = imgData[srcIndex];
+        outPixels[dstIndex+1] = imgData[srcIndex+1];
+        outPixels[dstIndex+2] = imgData[srcIndex+2];
+        outPixels[dstIndex+3] = imgData[srcIndex+3] * alpha;
       }
     }
+
+    ctx.putImageData(outImage, 0, 0);
+    return canvas;
   }
-
-  // 处理图片
-  function processImage() {
-    const innerRatio = parseFloat(innerRatioSlider.value);
-    const angleRange = parseFloat(angleRangeSlider.value);
-
-    warpImageToRing(innerRatio, angleRange);
-  }
-
-  // 初始化
-  createSampleImage();
-  processImage();
 </script>
+<input type="file" id="upload" accept="image/*">
+<div id="img-box"></div>
+<script>
+  document.getElementById('upload').onchange = function(e) {
+    const file = e.target.files[0];
+    const img = new Image();
+    img.onload = () => {
+      const innerRadius = 100;
+      const outerRadius = 150;
+      const ringCanvas = mapSquareToRingAA(img, innerRadius, outerRadius);
+      document.body.appendChild(ringCanvas);
+    };
+    img.src = URL.createObjectURL(file);
+    document.getElementById('img-box').append(img);
+  };
+</script>
+
 </body>
 </html>

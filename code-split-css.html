@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <title>图片弯曲成弧形（可调）</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 15px;
+        }
+        .controls {
+            margin-bottom: 10px;
+        }
+        label {
+            display: block;
+            margin: 6px 0 4px;
+            font-size: 14px;
+        }
+        #preview {
+            width: 300px;
+            height: 300px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+
+<h2>图片弯曲成弧形（保持比例，不变形）</h2>
+
+<input type="file" id="upload" accept="image/*" /><br /><br />
+
+<div class="controls">
+    <label>弧度角度：<span id="angleVal">180</span>°</label>
+    <input type="range" id="angle" min="10" max="360" value="180" />
+
+    <label>内半径：<span id="innerVal">60</span>px</label>
+    <input type="range" id="inner" min="0" max="140" value="60" />
+
+    <label>外半径：<span id="outerVal">120</span>px</label>
+    <input type="range" id="outer" min="80" max="150" value="120" />
+</div>
+
+<svg id="preview" viewBox="0 0 300 300"></svg>
+
+<script>
+  const svg = document.getElementById("preview");
+  const upload = document.getElementById("upload");
+  const angleInput = document.getElementById("angle");
+  const innerInput = document.getElementById("inner");
+  const outerInput = document.getElementById("outer");
+
+  let imgURL = "code.png";
+
+  function updateLabel() {
+    angleVal.textContent = angleInput.value;
+    innerVal.textContent = innerInput.value;
+    outerVal.textContent = outerInput.value;
+  }
+
+  function drawArc() {
+    if (!imgURL) return;
+
+    const angle = Number(angleInput.value);
+    const innerR = Number(innerInput.value);
+    const outerR = Number(outerInput.value);
+
+    // 限制：外半径必须比内半径大 10+
+    if (outerR - innerR < 10) return;
+
+    // 清空旧内容
+    svg.innerHTML = "";
+
+    // 计算弧路径
+    const cx = 150, cy = 150;
+    const startAngle = -angle / 2;
+    const endAngle = angle / 2;
+
+    const toXY = (r, deg) => {
+      const rad = (deg - 90) * Math.PI / 180;
+      return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+    };
+
+    const [x1o, y1o] = toXY(outerR, startAngle);
+    const [x2o, y2o] = toXY(outerR, endAngle);
+    const [x1i, y1i] = toXY(innerR, startAngle);
+    const [x2i, y2i] = toXY(innerR, endAngle);
+
+    const largeArc = angle > 180 ? 1 : 0;
+
+    const d = `
+    M ${x1o} ${y1o}
+    A ${outerR} ${outerR} 0 ${largeArc} 1 ${x2o} ${y2o}
+    L ${x2i} ${y2i}
+    A ${innerR} ${innerR} 0 ${largeArc} 0 ${x1i} ${y1i}
+    Z
+  `;
+
+    // SVG pattern 以保持比例方式绘制图片（A2）
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    defs.innerHTML = `
+    <pattern id="imgPattern" patternUnits="objectBoundingBox" width="1" height="1" preserveAspectRatio="xMidYMid slice">
+      <image href="${imgURL}" width="300" height="300" preserveAspectRatio="xMidYMid slice"></image>
+    </pattern>
+  `;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d.trim());
+    path.setAttribute("fill", "url(#imgPattern)");
+
+    svg.appendChild(defs);
+    svg.appendChild(path);
+  }
+
+  upload.addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    imgURL = URL.createObjectURL(file);
+    drawArc();
+  });
+
+  angleInput.oninput = innerInput.oninput = outerInput.oninput = () => {
+    updateLabel();
+    drawArc();
+  };
+
+  updateLabel();
+</script>
+
+</body>
+</html>
