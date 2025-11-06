@@ -2,201 +2,114 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>YOLOv8 ONNX Web Demo - Corrected</title>
+    <title>YOLOv8 ONNX Detection Web</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 12px; }
-        #wrap { position: relative; display: inline-block; }
-        canvas { display: block; max-width: 100%; height: auto; }
-        #overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
-        #controls { margin-top: 12px; }
-        #log { margin-left: 8px; color: #444; }
+        body { font-family: sans-serif; }
+        canvas { border: 1px solid black; }
     </style>
 </head>
 <body>
 
-<h3>YOLOv8 ONNX Web Demo - Correct Letterbox</h3>
-<input type="file" id="imgfile" accept="image/*"/>
-<div id="wrap">
-    <canvas id="imageCanvas"></canvas>
-    <canvas id="overlay"></canvas>
-</div>
-<div id="controls">
-    <button id="runBtn">Run Inference</button>
-    <span id="log"></span>
-</div>
+<h2>YOLOv8 ONNX Detection Web</h2>
+<input type="file" id="fileInput" accept="image/*">
+<br><br>
+<canvas id="canvas"></canvas>
 
-<script src="https://unpkg.com/onnxruntime-web/dist/ort.min.js"></script>
 <script>
-  const MODEL_URL = './yolov8n.onnx';
-  const SCORE_THRESHOLD = 0.25;
-  const IOU_THRESHOLD = 0.45;
-  const INPUT_SIZE = 640;
-  const CLASS_NAMES = [
-    "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
-    "fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow",
-    "elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee",
-    "skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle",
-    "wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange",
-    "broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed",
-    "dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven",
-    "toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"
-  ];
+  const IMG_SIZE = 640; // 模型输入尺寸
+  // COCO 类别示例，可根据你的模型修改
+  const CLASS_NAMES = ["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"];
 
-  const imgFile = document.getElementById('imgfile');
-  const imgCanvas = document.getElementById('imageCanvas');
-  const overlay = document.getElementById('overlay');
-  const runBtn = document.getElementById('runBtn');
-  const logEl = document.getElementById('log');
+  let session;
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
 
-  let loadedImage = null;
-  let session = null;
+  // 加载 ONNX 模型
+  async function loadModel() {
+    session = await ort.InferenceSession.create('yolov8n.onnx');
+    console.log('ONNX model loaded');
+  }
+  loadModel();
 
-  imgFile.addEventListener('change', (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
+  // 图片上传处理
+  document.getElementById('fileInput').addEventListener('change', async (evt) => {
+    const file = evt.target.files[0];
+    if (!file || !session) return;
+
     const img = new Image();
-    img.onload=()=>{ loadedImage=img; drawImageToCanvas(img); };
-    img.src=URL.createObjectURL(file);
-  });
+    img.src = URL.createObjectURL(file);
+    img.onload = async () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
 
-  function drawImageToCanvas(img){
-    const ctx = imgCanvas.getContext('2d');
-    const w = img.naturalWidth, h = img.naturalHeight;
-    imgCanvas.width=w; imgCanvas.height=h;
-    overlay.width=w; overlay.height=h;
-    ctx.drawImage(img,0,0,w,h);
-  }
+      // ---------------- 预处理 ----------------
+      let scale = Math.min(IMG_SIZE / img.width, IMG_SIZE / img.height);
+      let new_w = Math.floor(img.width * scale);
+      let new_h = Math.floor(img.height * scale);
 
-  function log(s){ logEl.textContent=s; }
+      // 创建离屏 canvas
+      let offCanvas = document.createElement('canvas');
+      offCanvas.width = IMG_SIZE;
+      offCanvas.height = IMG_SIZE;
+      let offCtx = offCanvas.getContext('2d');
 
-  async function loadModel(){
-    log('Loading model...');
-    session = await ort.InferenceSession.create(MODEL_URL);
-    log('Model loaded.');
-  }
+      // 填充灰色背景
+      offCtx.fillStyle = 'rgb(114,114,114)';
+      offCtx.fillRect(0,0,IMG_SIZE,IMG_SIZE);
 
-  runBtn.addEventListener('click', async ()=>{
-    if(!loadedImage) return alert('请选择图片');
-    if(!session) await loadModel();
-    await runInference(loadedImage);
-  });
+      // 绘制缩放图片
+      offCtx.drawImage(img, 0, 0, new_w, new_h);
 
-  // ----------------- Letterbox preprocess -----------------
-  function preprocess(img, targetSize=INPUT_SIZE){
-    const iw=img.naturalWidth, ih=img.naturalHeight;
-    const scale=Math.min(targetSize/iw, targetSize/ih);
-    const nw=Math.round(iw*scale), nh=Math.round(ih*scale);
-    const dx=(targetSize-nw)/2, dy=(targetSize-nh)/2;
+      // 获取像素数据并归一化
+      let imageData = offCtx.getImageData(0,0,IMG_SIZE,IMG_SIZE);
+      let data = imageData.data; // RGBA Uint8ClampedArray
 
-    const canvas=document.createElement('canvas');
-    canvas.width=targetSize; canvas.height=targetSize;
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle='rgb(114,114,114)'; ctx.fillRect(0,0,targetSize,targetSize);
-    ctx.drawImage(img,0,0,iw,ih,dx,dy,nw,nh);
-
-    const imgData=ctx.getImageData(0,0,targetSize,targetSize).data;
-    const floats=new Float32Array(3*targetSize*targetSize);
-    let ptr=0;
-    for(let c=0;c<3;c++){
-      for(let y=0;y<targetSize;y++){
-        for(let x=0;x<targetSize;x++){
-          const i=(y*targetSize+x)*4;
-          floats[ptr++]=imgData[i+c]/255.0;
+      // HWC -> CHW
+      let chw = new Float32Array(3*IMG_SIZE*IMG_SIZE);
+      for(let y=0;y<IMG_SIZE;y++){
+        for(let x=0;x<IMG_SIZE;x++){
+          let idx = (y*IMG_SIZE + x)*4;
+          chw[y*IMG_SIZE + x] = data[idx]/255.0; // R
+          chw[IMG_SIZE*IMG_SIZE + y*IMG_SIZE + x] = data[idx+1]/255.0; // G
+          chw[2*IMG_SIZE*IMG_SIZE + y*IMG_SIZE + x] = data[idx+2]/255.0; // B
         }
       }
-    }
-    return {tensorData:floats, dx, dy, scale, targetSize};
-  }
 
-  // ----------------- NMS -----------------
-  function iou(a,b){
-    const x1=Math.max(a[0],b[0]), y1=Math.max(a[1],b[1]);
-    const x2=Math.min(a[2],b[2]), y2=Math.min(a[3],b[3]);
-    const inter=Math.max(0,x2-x1)*Math.max(0,y2-y1);
-    const areaA=(a[2]-a[0])*(a[3]-a[1]);
-    const areaB=(b[2]-b[0])*(b[3]-b[1]);
-    return inter/(areaA+areaB-inter+1e-12);
-  }
-  function nms(boxes,scores,iouThresh){
-    const idxs = scores.map((s,i)=>[s,i]).sort((a,b)=>b[0]-a[0]).map(x=>x[1]);
-    const keep=[];
-    while(idxs.length){
-      const i=idxs.shift();
-      keep.push(i);
-      for(let j=idxs.length-1;j>=0;j--){
-        const k=idxs[j];
-        if(iou(boxes[i],boxes[k])>iouThresh) idxs.splice(j,1);
+      // ---------------- 推理 ----------------
+      const inputTensor = new ort.Tensor('float32', chw, [1,3,IMG_SIZE,IMG_SIZE]);
+      const feeds = {};
+      feeds[session.inputNames[0]] = inputTensor;
+
+      const output = await session.run(feeds);
+      let pred = output[session.outputNames[0]].data; // Float32Array
+      let numBoxes = pred.length / 6;
+      pred = Array.from(pred);
+
+      // ---------------- 绘制结果 ----------------
+      ctx.lineWidth = 2;
+      ctx.font = '16px sans-serif';
+      ctx.strokeStyle = 'red';
+      ctx.fillStyle = 'red';
+
+      for(let i=0;i<numBoxes;i++){
+        let x1 = pred[i*6 + 0] / scale;
+        let y1 = pred[i*6 + 1] / scale;
+        let x2 = pred[i*6 + 2] / scale;
+        let y2 = pred[i*6 + 3] / scale;
+        let conf = pred[i*6 + 4];
+        let cls = pred[i*6 + 5];
+
+        if(conf < 0.25) continue; // 阈值可调
+
+        let clsName = CLASS_NAMES[cls] || cls;
+        ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+        ctx.fillText(`${clsName} ${conf.toFixed(2)}`, x1, Math.max(0,y1-5));
       }
+
     }
-    return keep;
-  }
-
-  // ----------------- Parse YOLOv8 [1,84,8400] -----------------
-  function parseOutput(output, prep, imgW, imgH){
-    const [b, c, n] = output.dims;
-    const data = output.data;
-    const boxes=[], scores=[], classes=[];
-    for(let i=0;i<n;i++){
-      const base=i*c;
-      const cx=data[base+0], cy=data[base+1], w=data[base+2], h=data[base+3];
-      const objConf=data[base+4];
-      if(objConf<SCORE_THRESHOLD) continue;
-
-      let maxCls=0, maxScore=0;
-      for(let k=0;k<CLASS_NAMES.length;k++){
-        const clsConf=data[base+5+k];
-        if(clsConf>maxScore){ maxScore=clsConf; maxCls=k;}
-      }
-      const finalScore=objConf*maxScore;
-      if(finalScore<SCORE_THRESHOLD) continue;
-
-      // map back to original image using letterbox info
-      const x1=(cx-w/2-prep.dx)/prep.scale;
-      const y1=(cy-h/2-prep.dy)/prep.scale;
-      const x2=(cx+w/2-prep.dx)/prep.scale;
-      const y2=(cy+h/2-prep.dy)/prep.scale;
-
-      boxes.push([x1,y1,x2,y2]);
-      scores.push(finalScore);
-      classes.push(maxCls);
-    }
-    const keep=nms(boxes,scores,IOU_THRESHOLD);
-    return {boxes:keep.map(i=>boxes[i]), scores:keep.map(i=>scores[i]), classes:keep.map(i=>classes[i])};
-  }
-
-  // ----------------- Draw -----------------
-  function drawDetections(dets){
-    const ctx=overlay.getContext('2d');
-    ctx.clearRect(0,0,overlay.width,overlay.height);
-    ctx.lineWidth=2; ctx.font='16px sans-serif';
-    for(let i=0;i<dets.boxes.length;i++){
-      const b=dets.boxes[i], cls=dets.classes[i], score=dets.scores[i];
-      ctx.strokeStyle='#ff3b30'; ctx.fillStyle='#ff3b30';
-      ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);
-      const label=`${CLASS_NAMES[cls]||cls} ${(score*100).toFixed(1)}%`;
-      const tw=ctx.measureText(label).width;
-      ctx.fillRect(b[0],b[1]-22,tw+6,20);
-      ctx.fillStyle='white';
-      ctx.fillText(label,b[0]+3,b[1]-6);
-    }
-  }
-
-  // ----------------- Run Inference -----------------
-  async function runInference(img){
-    log('Preprocessing...');
-    const prep=preprocess(img,INPUT_SIZE);
-    const inputTensor=new ort.Tensor('float32',prep.tensorData,[1,3,INPUT_SIZE,INPUT_SIZE]);
-    log('Running inference...');
-    const inputName=session.inputNames[0];
-    const result=await session.run({[inputName]:inputTensor});
-    const output=result[session.outputNames[0]];
-    console.log('Raw output dims:',output.dims,' sample slice:',output.data.slice(0,120));
-    log('Postprocessing...');
-    const dets=parseOutput(output,prep,img.naturalWidth,img.naturalHeight);
-    drawDetections(dets);
-    log(`Detections: ${dets.boxes.length}`);
-  }
-
+  });
 </script>
 </body>
 </html>
