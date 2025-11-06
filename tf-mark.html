@@ -29,7 +29,9 @@
 
   // 加载 ONNX 模型
   async function loadModel() {
-    session = await ort.InferenceSession.create('yolov8n.onnx');
+    session = await ort.InferenceSession.create('yolov8n.onnx', {
+      executionProviders: ['webgpu','webgl','wasm']
+    });
     console.log('ONNX model loaded');
   }
   loadModel();
