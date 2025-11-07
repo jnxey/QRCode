@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+<body>
+<script>
+  /**
+   * 将圆形图片按圆心展开成长方形（文字方向正常，带抗锯齿）
+   * @param {HTMLImageElement} img - 原始图片元素
+   * @param {number} outputWidth - 输出图片宽度
+   * @param {number} outputHeight - 输出图片高度
+   * @returns {HTMLCanvasElement} 返回生成的 Canvas
+   */
+  function polarToRectangularFixed(img, outputWidth, outputHeight) {
+    const canvas = document.createElement('canvas');
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const ctx = canvas.getContext('2d');
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = img.width;
+    tempCanvas.height = img.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(img, 0, 0);
+    const srcData = tempCtx.getImageData(0, 0, img.width, img.height);
+
+    const dstData = ctx.createImageData(outputWidth, outputHeight);
+
+    const cx = img.width / 2;
+    const cy = img.height / 2;
+    const maxRadius = Math.min(cx, cy);
+
+    // 双线性插值函数
+    function bilinear(x, y) {
+      const x1 = Math.floor(x);
+      const y1 = Math.floor(y);
+      const x2 = Math.min(x1 + 1, img.width - 1);
+      const y2 = Math.min(y1 + 1, img.height - 1);
+      const dx = x - x1;
+      const dy = y - y1;
+
+      const getPixel = (px, py) => {
+        const idx = (py * img.width + px) * 4;
+        return [
+          srcData.data[idx],
+          srcData.data[idx + 1],
+          srcData.data[idx + 2],
+          srcData.data[idx + 3]
+        ];
+      };
+
+      const p11 = getPixel(x1, y1);
+      const p12 = getPixel(x1, y2);
+      const p21 = getPixel(x2, y1);
+      const p22 = getPixel(x2, y2);
+
+      const result = [];
+      for (let i = 0; i < 4; i++) {
+        const val = p11[i] * (1 - dx) * (1 - dy) +
+          p21[i] * dx * (1 - dy) +
+          p12[i] * (1 - dx) * dy +
+          p22[i] * dx * dy;
+        result.push(val);
+      }
+      return result;
+    }
+
+    for (let y = 0; y < outputHeight; y++) {
+      const r = (y / outputHeight) * maxRadius; // 半径比例
+      for (let x = 0; x < outputWidth; x++) {
+        // 修正文字方向：逆时针展开
+        const theta = 2 * Math.PI - (x / outputWidth) * 2 * Math.PI;
+        const srcX = cx + r * Math.cos(theta);
+        const srcY = cy + r * Math.sin(theta);
+
+        if (srcX >= 0 && srcX < img.width && srcY >= 0 && srcY < img.height) {
+          const dstIndex = (y * outputWidth + x) * 4;
+          const [rVal, gVal, bVal, aVal] = bilinear(srcX, srcY);
+          dstData.data[dstIndex] = rVal;
+          dstData.data[dstIndex + 1] = gVal;
+          dstData.data[dstIndex + 2] = bVal;
+          dstData.data[dstIndex + 3] = aVal;
+        }
+      }
+    }
+
+    ctx.putImageData(dstData, 0, 0);
+    return canvas;
+  }
+
+  // 使用示例：
+  const img = new Image();
+  img.src = 'ocr.png';
+  img.onload = () => {
+    const resultCanvas = polarToRectangularFixed(img, 500, 200);
+    document.body.appendChild(resultCanvas);
+  };
+
+</script>
+</body>
+</html>

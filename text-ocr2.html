@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>OCR 简单示例（recognize）</title></head>
+<body>
+<input id="file" type="file" accept="image/*">
+<pre id="log"></pre>
+
+<!-- 推荐指定一个已知的版本，避免 CDN 拉到不兼容的新版 -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+
+<script>
+  const fileEl = document.getElementById('file');
+  const log = document.getElementById('log');
+
+  fileEl.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const imgUrl = URL.createObjectURL(f);
+    log.innerText = '开始识别...';
+    try {
+      // 这里使用 recognize，不用显式 load/loadLanguage/initialize
+      const res = await Tesseract.recognize(imgUrl, 'eng', {
+        logger: m => {
+          if (m.status) log.innerText = `${m.status} ${Math.round((m.progress||0)*100)}%`;
+        }
+      });
+      log.innerText = '识别结果:\n' + res.data.text;
+    } catch (err) {
+      log.innerText = '识别出错: ' + err.message;
+      console.error(err);
+    } finally {
+      URL.revokeObjectURL(imgUrl);
+    }
+  });
+</script>
+</body>
+</html>
